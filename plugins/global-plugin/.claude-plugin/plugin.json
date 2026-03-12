@@ -1,0 +1,5 @@
+{
+  "name": "global-plugin",
+  "description": "Add globally relevant skills like code-review and reflect",
+  "version": "1.0.0"
+}
