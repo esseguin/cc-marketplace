@@ -1,5 +1,4 @@
 ---
-name: reflect
 description: >
   Review the current conversation to extract learnings, patterns, and conventions worth
   preserving for future sessions. Use this skill when the user says things like "/reflect",
@@ -58,6 +57,7 @@ Scan the full conversation for:
   CLAUDE.md, or AI guides? Flag these for cleanup.
 
 Ignore things that are:
+
 - Already documented **in project-scoped files**
 - Too specific to this one task to be useful again
 - Obviously temporary (one-off workarounds, debugging steps)
@@ -101,6 +101,7 @@ times or if the user explicitly asks.
 ### Organizing doc files
 
 For project docs and AI guides, think about topic grouping:
+
 - Add to an existing file if the learning fits an established topic
 - Create a new file if it's a genuinely new topic area
 - Use descriptive filenames (`ui-patterns.md`, `godot-resources.md`, not `notes.md`)
@@ -110,6 +111,7 @@ For project docs and AI guides, think about topic grouping:
 
 Wait for explicit approval before writing anything. Present your proposals clearly enough
 that the user can:
+
 - Approve all
 - Approve some and reject others
 - Suggest rewording or a different destination
@@ -130,6 +132,7 @@ After approval, make the writes. For each destination:
 ## Step 5: Verify
 
 After writing, do a quick sanity check:
+
 - Read back CLAUDE.md to confirm it's not getting bloated
 - Make sure new docs are discoverable (linked from CLAUDE.md or an index if appropriate)
 - Run `tools/check-errors` if you modified any code-adjacent files
