@@ -2,6 +2,8 @@
 description: "Review local code changes for quality, functionality, and documentation. Use when the user says things like: 'review my changes', 'review this branch', 'code review', 'check my code', 'review before I commit', 'what do you think of these changes', 'look over my diff', or any request to evaluate uncommitted or branch-level changes. Proactively use this even if the user doesn't say 'review' explicitly but is clearly asking for feedback on their recent work."
 ---
 
+<!-- Inspired by https://github.com/anthropics/claude-plugins-official/blob/main/plugins/code-review/commands/code-review.md -->
+
 Review the user's local code changes, provide structured findings with severity scores, and offer to fix issues.
 
 ## Step 1: Determine Scope
@@ -20,20 +22,29 @@ git log --oneline -1 @{upstream} 2>/dev/null || echo "no upstream"
 
 - If the user explicitly asks for a "branch review" or "PR review", review the full branch diff (even if there are also uncommitted changes — review both)
 - If the user explicitly asks to review "my changes" or "uncommitted changes", review only the working tree
-- If the user doesn't specify: check for uncommitted changes first. If there are uncommitted changes, review those. If the working tree is clean, review the full branch diff.
+- If the user doesn't specify: check for uncommitted changes first. If there are uncommitted changes, review those. If the working tree is clean, try the PR path (see below). If there's no PR either, review the full branch diff.
 - If there are both uncommitted changes and the user's intent is ambiguous, review uncommitted changes but mention that a full branch review is available if they want it.
-
-**For branch reviews**, find the merge base:
-
-```
-git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null
-```
-
-Use `git diff <merge-base>..HEAD` and `git log --oneline <merge-base>..HEAD` to understand the full scope.
 
 **For uncommitted changes**, use `git diff` (unstaged) and `git diff --cached` (staged).
 
-Tell the user what scope you're reviewing and why, e.g.: "Reviewing uncommitted changes (3 files modified)" or "Reviewing branch `feature/foo` — 12 commits since diverging from `main`".
+**For PR reviews** (clean working tree, or user asked for PR/branch review):
+
+Check if a PR exists for the current branch:
+```
+gh pr view --json number,title,url,baseRefName 2>/dev/null
+```
+
+If a PR exists, use `gh pr diff` to get the changes and `gh pr view` for context. This is simpler and more accurate than computing merge bases manually.
+
+**Fallback — branch diff without a PR:**
+
+If there's no PR, find the merge base:
+```
+git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null
+```
+Use `git diff <merge-base>..HEAD` and `git log --oneline <merge-base>..HEAD` to understand the full scope.
+
+Tell the user what scope you're reviewing and why, e.g.: "Reviewing uncommitted changes (3 files modified)" or "Reviewing PR #42 — `feature/foo`" or "Reviewing branch `feature/foo` — 12 commits since diverging from `main`".
 
 ## Step 2: Gather Context
 
@@ -54,22 +65,41 @@ Don't ask questions about things you can figure out from the code. Only ask when
 
 ## Step 3: Review the Changes
 
-Evaluate each change across these categories, weighted by relevance to what actually changed:
+Launch parallel subagents to review the changes from different angles. Each agent gets the diff and the list of CLAUDE.md file paths, then focuses on its assigned category. This parallelism makes reviews faster and ensures each category gets dedicated attention rather than being rushed through sequentially.
 
-### Always review:
+Spawn these agents in parallel:
 
-- **Functionality**: Does this do what it's supposed to? Are there bugs, logic errors, edge cases, or regressions? Is it performant — any obvious O(n^2) loops, unnecessary allocations, missing caches, or repeated work?
-- **Code Quality**: Readability, conciseness, naming, adherence to project conventions (from CLAUDE.md), DRY, appropriate abstraction level. Are there simpler ways to achieve the same thing?
-- **Documentation**: Do new public APIs have adequate docs? Do changed behaviors have updated docs? Are there now-stale comments, READMEs, or docstrings that reference old behavior?
+### Agent 1: Functionality & Bugs
+Scan the diff for logic errors, edge cases, regressions, and performance issues (O(n²) loops, unnecessary allocations, missing caches, repeated work). Read surrounding code when needed to understand call sites and data flow. Focus on real bugs that would affect users — not things a linter or type checker would catch.
 
-### Review when relevant (use your judgment):
+### Agent 2: Code Quality & Conventions
+Check readability, naming, DRY, appropriate abstraction level, and adherence to project conventions from CLAUDE.md. Look for simpler ways to achieve the same thing. Not all CLAUDE.md instructions apply during review (some are about how to write code interactively), so use judgment about which ones are relevant.
 
-- **Architecture**: Does this change fit the existing patterns? Does it introduce unnecessary coupling or complexity?
-- **Error handling**: Are failure modes handled? Are error messages helpful?
-- **Testing**: If the project has tests, are new behaviors tested? Are existing tests now stale?
-- **Anything else** you notice that a senior engineer would flag — use your expertise
+### Agent 3: Dead Code & Completeness
+Look for newly orphaned code: files, functions, imports, or variables that nothing references anymore — common leftovers after refactors, renames, or feature removals. Check whether old files were meant to be deleted. Also check for incomplete changes: did the author update the implementation but forget to update related tests, docs, config, or types?
 
-## Step 4: Present Findings
+### Agent 4: Architecture & Error Handling
+Does this change fit existing patterns? Does it introduce unnecessary coupling or complexity? Are failure modes handled? Are error messages helpful? If the project has tests, are new behaviors tested and are existing tests still valid?
+
+Each agent should return a list of findings, where each finding includes:
+- A short title
+- The file and line(s) affected
+- A clear explanation of the issue and why it matters
+- A suggested category (Functionality, Quality, Dead Code, Architecture, Error Handling, Testing, Documentation)
+
+## Step 4: Filter Findings
+
+After collecting findings from all agents, do a quick sanity pass to filter out false positives before presenting to the user. Drop findings that match these patterns:
+
+- **Pre-existing issues** — problems on lines the user didn't modify, unless the user's change makes them worse
+- **Linter/compiler territory** — missing imports, type errors, formatting issues, style nitpicks that automated tools would catch
+- **Intentional changes** — functionality changes that are clearly deliberate and directly related to the purpose of the diff
+- **Generic quality complaints** — vague concerns about test coverage, security, or documentation unless specifically required by CLAUDE.md
+- **Silenced warnings** — issues called out in CLAUDE.md but explicitly suppressed in code (e.g., lint ignore comments)
+
+If a finding wouldn't survive light scrutiny from a senior engineer who understands the context, drop it. A shorter list of real issues is far more valuable than a long list padded with noise.
+
+## Step 5: Present Findings
 
 Format your review as follows:
 
@@ -80,7 +110,7 @@ Start with a one-line overall assessment, then the scope:
 ```
 ## Code Review: [brief description of what changed]
 
-**Scope**: [Uncommitted changes | Branch `name` — N commits since `base-branch`]
+**Scope**: [Uncommitted changes | PR #N — `branch-name` | Branch `name` — N commits since `base-branch`]
 **Files reviewed**: N files changed (+X, -Y lines)
 **Overall**: [Brief 1-sentence assessment — e.g. "Solid implementation with a few issues to address" or "Looks good, minor suggestions only"]
 ```
@@ -121,7 +151,7 @@ After the table, expand each finding:
 
 If something is particularly well done, say so briefly at the end. Engineers appreciate knowing what's working well, not just what's wrong.
 
-## Step 5: Recommend and Fix
+## Step 6: Recommend and Fix
 
 After presenting findings, recommend which ones are worth fixing:
 
