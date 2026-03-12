@@ -10,39 +10,23 @@ Review the user's local code changes, provide structured findings with severity 
 
 Figure out what to review based on the user's prompt and the repo state.
 
-Run these commands to assess the situation:
+Run these commands in parallel to assess the situation:
 
 ```
-git status
+git status --short
 git branch --show-current
-git log --oneline -1 @{upstream} 2>/dev/null || echo "no upstream"
+gh pr view --json number,title,url,baseRefName 2>/dev/null || echo "no PR"
 ```
 
-**Scope rules:**
+**Scope rules (in priority order):**
 
-- If the user explicitly asks for a "branch review" or "PR review", review the full branch diff (even if there are also uncommitted changes — review both)
-- If the user explicitly asks to review "my changes" or "uncommitted changes", review only the working tree
-- If the user doesn't specify: check for uncommitted changes first. If there are uncommitted changes, review those. If the working tree is clean, try the PR path (see below). If there's no PR either, review the full branch diff.
-- If there are both uncommitted changes and the user's intent is ambiguous, review uncommitted changes but mention that a full branch review is available if they want it.
-
-**For uncommitted changes**, use `git diff` (unstaged) and `git diff --cached` (staged).
-
-**For PR reviews** (clean working tree, or user asked for PR/branch review):
-
-Check if a PR exists for the current branch:
-```
-gh pr view --json number,title,url,baseRefName 2>/dev/null
-```
-
-If a PR exists, use `gh pr diff` to get the changes and `gh pr view` for context. This is simpler and more accurate than computing merge bases manually.
-
-**Fallback — branch diff without a PR:**
-
-If there's no PR, find the merge base:
-```
-git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null
-```
-Use `git diff <merge-base>..HEAD` and `git log --oneline <merge-base>..HEAD` to understand the full scope.
+1. If there are uncommitted changes (staged or unstaged), review those using `git diff` and `git diff --cached`. Mention that a PR or full branch review is also available if relevant.
+2. If the working tree is clean and a PR exists, use `gh pr diff` to get the changes and `gh pr view` for context. This is the preferred path for branch reviews — simpler and more accurate than computing merge bases manually.
+4. **Last resort** — no PR and clean working tree: fall back to a local branch diff. Find the merge base:
+   ```
+   git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null
+   ```
+   Use `git diff <merge-base>..HEAD` and `git log --oneline <merge-base>..HEAD`.
 
 Tell the user what scope you're reviewing and why, e.g.: "Reviewing uncommitted changes (3 files modified)" or "Reviewing PR #42 — `feature/foo`" or "Reviewing branch `feature/foo` — 12 commits since diverging from `main`".
 
@@ -65,9 +49,9 @@ Don't ask questions about things you can figure out from the code. Only ask when
 
 ## Step 3: Review the Changes
 
-Launch parallel subagents to review the changes from different angles. Each agent gets the diff and the list of CLAUDE.md file paths, then focuses on its assigned category. This parallelism makes reviews faster and ensures each category gets dedicated attention rather than being rushed through sequentially.
+Launch parallel Sonnet subagents to review the changes from different angles. Each agent gets the diff and the list of CLAUDE.md file paths, then focuses on its assigned category. Sonnet is the right model here — the review categories are well-scoped and don't need heavy reasoning. This parallelism makes reviews faster and ensures each category gets dedicated attention rather than being rushed through sequentially.
 
-Spawn these agents in parallel:
+Spawn these agents in parallel (using Sonnet):
 
 ### Agent 1: Functionality & Bugs
 Scan the diff for logic errors, edge cases, regressions, and performance issues (O(n²) loops, unnecessary allocations, missing caches, repeated work). Read surrounding code when needed to understand call sites and data flow. Focus on real bugs that would affect users — not things a linter or type checker would catch.
@@ -89,7 +73,7 @@ Each agent should return a list of findings, where each finding includes:
 
 ## Step 4: Filter Findings
 
-After collecting findings from all agents, do a quick sanity pass to filter out false positives before presenting to the user. Drop findings that match these patterns:
+After collecting findings from all agents, use a Haiku subagent to do a quick sanity pass and filter out false positives before presenting to the user. Give it the diff and the combined findings list. Drop findings that match these patterns:
 
 - **Pre-existing issues** — problems on lines the user didn't modify, unless the user's change makes them worse
 - **Linter/compiler territory** — missing imports, type errors, formatting issues, style nitpicks that automated tools would catch

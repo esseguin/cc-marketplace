@@ -1,13 +1,13 @@
 {
-  "name": "my-plugins",
+  "name": "esseguin-plugins",
   "owner": {
     "name": "Evan Seguin"
   },
   "plugins": [
     {
-      "name": "global-plugin",
-      "source": "./plugins/global-plugin",
-      "description": "Add globally relevant skills like code-review and reflect"
+      "name": "global",
+      "source": "./plugins/global",
+      "description": "Globally relevant skills like code-review and reflect"
     }
   ]
 }
