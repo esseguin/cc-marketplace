@@ -51,6 +51,12 @@ Don't ask questions about things you can figure out from the code. Only ask when
 
 Launch parallel Sonnet subagents to review the changes from different angles. Each agent gets the diff and the list of CLAUDE.md file paths, then focuses on its assigned category. Sonnet is the right model here — the review categories are well-scoped and don't need heavy reasoning. This parallelism makes reviews faster and ensures each category gets dedicated attention rather than being rushed through sequentially.
 
+**Critical tool usage rules for all agents — these prevent the review from stalling on permission prompts:**
+
+1. **Use dedicated tools, not Bash, for file operations.** Use `Grep` (not `bash grep/rg`), `Glob` (not `bash find/ls`), and `Read` (not `bash cat/head/tail`). These are auto-approved and won't block on permission prompts.
+2. **Do not re-run `git diff`.** You already have the diff — it was passed to you in your prompt. If you need to check the current state of a file, use `Read`. If you need to search for references across the codebase, use `Grep`. There is no reason to shell out to git.
+3. **No comments in Bash commands.** Never put a `# comment` on the line before a command — the multi-line input triggers a "contains newlines" safety prompt that requires manual approval. Use the Bash tool's `description` parameter for context instead.
+
 Spawn these agents in parallel (using Sonnet):
 
 ### Agent 1: Functionality & Bugs
